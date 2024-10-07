@@ -221,21 +221,13 @@ class NF4ModelPatcher(ModelPatcher):
             module = weight.module
             weight = functional_dequantize_4bit(weight)
             
-        if device_to is not None:
-            temp_weight = comfy.model_management.cast_to_device(weight, device_to, torch.float32, copy=True)
-        else:
-            temp_weight = weight.to(torch.float32, copy=True)
+        temp_weight = weight.to(torch.device('cuda'), copy=True, non_blocking=False).to(torch.float32)
 
         out_weight = comfy.lora.calculate_weight(self.patches[key], temp_weight, key)
-        
-        if bnb_layer:
-            # To-do: Fix image burnout
-            # out_weight = stochastic_rounding_nf4(out_weight, seed=string_to_seed(key))
-            out_weight = comfy.float.stochastic_rounding(out_weight, torch.float8_e4m3fn, seed=string_to_seed(key))
-            out_weight = self.reload_weight(out_weight.float(), compress_statistics,
-                                    blocksize, quant_type, quant_state, bnb_quantized, module)
-        else:
-            out_weight = comfy.float.stochastic_rounding(out_weight, weight.dtype, seed=string_to_seed(key))
+        # To-do: Fix image burnout
+        # out_weight = stochastic_rounding_nf4(out_weight, seed=string_to_seed(key))
+        out_weight = comfy.float.stochastic_rounding(out_weight, torch.float8_e4m3fn, seed=string_to_seed(key))
+        out_weight = self.reload_weight(out_weight.float(), compress_statistics, blocksize, quant_type, quant_state, bnb_quantized, module)
 
         if inplace_update:
             comfy.utils.copy_to_param(self.model, key, out_weight)
@@ -251,7 +243,7 @@ class NF4ModelPatcher(ModelPatcher):
             blocksize=bs,
             quant_type=qt,
             quant_storage=torch.uint8,
-            quant_state=copy_quant_state(quant_state, torch.device('cuda')),
+            quant_state=copy_quant_state(quant_state, weight_original_device),
             bnb_quantized=bnb_quantized,
             module=module
         )
