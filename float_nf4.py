@@ -17,7 +17,8 @@ def manual_stochastic_round_to_nf4(x, generator=None):
     elif dtype == torch.fp4_e3m0:
         EXPONENT_BITS, MANTISSA_BITS, EXPONENT_BIAS = 3, 0, 7
     '''
-    EXPONENT_BITS, MANTISSA_BITS, EXPONENT_BIAS = 3, 0, 7
+    EXPONENT_BITS, MANTISSA_BITS, EXPONENT_BIAS = 2, 1, 7
+    # EXPONENT_BITS, MANTISSA_BITS, EXPONENT_BIAS = 3, 0, 15
 
     x = x.half()
     sign = torch.sign(x)
@@ -46,7 +47,7 @@ def manual_stochastic_round_to_nf4(x, generator=None):
 def stochastic_rounding_nf4(value, seed=0):
     generator = torch.Generator(device=value.device)
     generator.manual_seed(seed)
-    output = torch.empty_like(value, dtype=torch.float32)
+    output = torch.empty_like(value, dtype=torch.float16)
     num_slices = max(1, (value.numel() / (4096 * 4096)))
     slice_size = max(1, round(value.shape[0] / num_slices))
     for i in range(0, value.shape[0], slice_size):

@@ -225,8 +225,8 @@ class NF4ModelPatcher(ModelPatcher):
 
         out_weight = comfy.lora.calculate_weight(self.patches[key], temp_weight, key)
         # To-do: Fix image burnout
-        # out_weight = stochastic_rounding_nf4(out_weight, seed=string_to_seed(key))
-        out_weight = comfy.float.stochastic_rounding(out_weight, torch.float8_e4m3fn, seed=string_to_seed(key))
+        out_weight = stochastic_rounding_nf4(out_weight, seed=string_to_seed(key))
+        # out_weight = comfy.float.stochastic_rounding(out_weight, torch.float8_e4m3fn, seed=string_to_seed(key))
         out_weight = self.reload_weight(out_weight.float(), compress_statistics, blocksize, quant_type, quant_state, bnb_quantized, module)
 
         if inplace_update:
