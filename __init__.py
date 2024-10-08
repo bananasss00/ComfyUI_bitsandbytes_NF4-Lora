@@ -15,6 +15,8 @@ from comfy.model_patcher import ModelPatcher, string_to_seed
 
 from .float_nf4 import stochastic_rounding_nf4
 
+rounding_format_default = '2,1,7'
+
 def functional_linear_4bits(x, weight, bias):
     out = bnb.matmul_4bit(x, weight.t(), bias=bias, quant_state=weight.quant_state)
     out = out.to(x)
@@ -194,6 +196,8 @@ class ForgeLoader4Bit(torch.nn.Module):
 import comfy.ops
 
 class NF4ModelPatcher(ModelPatcher):
+    rounding_format = rounding_format_default
+
     def patch_weight_to_device(self, key, device_to=None, inplace_update=False):
         if key not in self.patches:
             return
@@ -225,7 +229,7 @@ class NF4ModelPatcher(ModelPatcher):
 
         out_weight = comfy.lora.calculate_weight(self.patches[key], temp_weight, key)
         # To-do: Fix image burnout
-        out_weight = stochastic_rounding_nf4(out_weight, seed=string_to_seed(key))
+        out_weight = stochastic_rounding_nf4(out_weight, self.rounding_format, seed=string_to_seed(key))
         # out_weight = comfy.float.stochastic_rounding(out_weight, torch.float8_e4m3fn, seed=string_to_seed(key))
         out_weight = self.reload_weight(out_weight.float(), compress_statistics, blocksize, quant_type, quant_state, bnb_quantized, module)
 
@@ -268,6 +272,7 @@ class NF4ModelPatcher(ModelPatcher):
         n.model_options = copy.deepcopy(self.model_options)
         n.backup = self.backup
         n.object_patches_backup = self.object_patches_backup
+        n.rounding_format = getattr(self, "rounding_format", rounding_format_default)
         return n
 
 def make_ops(loader_class, current_device = None, current_dtype = None, current_manual_cast_enabled = False, current_bnb_dtype = None):
@@ -302,14 +307,15 @@ def make_ops(loader_class, current_device = None, current_dtype = None, current_
     return OPS
 
 
-class CheckpointLoaderBNB:
+class SP_CheckpointLoaderBNB:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
             "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
             "load_clip": (["True", "False"], ),
             "load_vae": (["True", "False"], ),
-            "bnb_dtype": (("default", "nf4", "fp4"), {"default": "default"}),
+            "bnb_dtype": (("default", "nf4", "fp4"), {"default": "nf4"}),
+            "rounding_format": (("2,1,7", "4,3,7"), {"default": rounding_format_default}),
          }}
 
     RETURN_TYPES = ("MODEL", "CLIP", "VAE")
@@ -317,7 +323,7 @@ class CheckpointLoaderBNB:
 
     CATEGORY = "loaders"
 
-    def load_checkpoint(self, ckpt_name, load_clip, load_vae, bnb_dtype="default"):
+    def load_checkpoint(self, ckpt_name, load_clip, load_vae, bnb_dtype="default", rounding_format=rounding_format_default):
         if bnb_dtype == "default":
             bnb_dtype = None
         ops = make_ops(ForgeLoader4Bit, current_bnb_dtype = bnb_dtype)
@@ -325,15 +331,17 @@ class CheckpointLoaderBNB:
         model, clip, vae, _ = comfy.sd.load_checkpoint_guess_config(ckpt_path, output_vae=load_vae=="True", output_clip=load_clip=="True", embedding_directory=folder_paths.get_folder_paths("embeddings"), model_options={"custom_operations": ops})
 
         model = NF4ModelPatcher.clone(model)
+        model.rounding_format = rounding_format
 
         return model, clip, vae
     
-class UnetLoaderBNB:
+class SP_UnetLoaderBNB:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
             "unet_name": (folder_paths.get_filename_list("unet"), ),
-            "bnb_dtype": (("default", "nf4", "fp4"), {"default": "default"}),
+            "bnb_dtype": (("default", "nf4", "fp4"), {"default": "nf4"}),
+            "rounding_format": (("2,1,7", "4,3,7"), {"default": rounding_format_default}),
          }}
 
     RETURN_TYPES = ("MODEL",)
@@ -341,7 +349,7 @@ class UnetLoaderBNB:
 
     CATEGORY = "loaders"
 
-    def load_checkpoint(self, unet_name, bnb_dtype="default"):
+    def load_checkpoint(self, unet_name, bnb_dtype="default", rounding_format=rounding_format_default):
         if bnb_dtype == "default":
             bnb_dtype = None
         ops = make_ops(ForgeLoader4Bit, current_bnb_dtype = bnb_dtype)
@@ -349,22 +357,12 @@ class UnetLoaderBNB:
         model = comfy.sd.load_diffusion_model(unet_path, model_options={"custom_operations": ops})
 
         model = NF4ModelPatcher.clone(model)
+        model.rounding_format = rounding_format
 
         return model, 
 
-class CheckpointLoaderNF4_New(CheckpointLoaderBNB):
-    @classmethod
-    def INPUT_TYPES(s):
-        return {"required": {
-            "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
-            "load_clip": (["True", "False"], ),
-            "load_vae": (["True", "False"], )
-         }}
-
-
 NODE_CLASS_MAPPINGS = {
-    "CheckpointLoaderNF4_New": CheckpointLoaderNF4_New,
-    "UnetLoaderBNB": UnetLoaderBNB,
-    "CheckpointLoaderBNB": CheckpointLoaderBNB,
+    "SP_UnetLoaderBNB": SP_UnetLoaderBNB,
+    "SP_CheckpointLoaderBNB": SP_CheckpointLoaderBNB,
 }
 
