@@ -18,7 +18,7 @@ def manual_stochastic_round_to_nf4(x, rounding_format, generator=None):
         EXPONENT_BITS, MANTISSA_BITS, EXPONENT_BIAS = 3, 0, 7
     '''
 
-    
+    # bias = 2**(EXPONENT_BITS-1) - 1
 
     rounding_format_arr = rounding_format.split(',')
     if len(rounding_format_arr) != 3:

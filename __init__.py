@@ -308,7 +308,7 @@ class SP_CheckpointLoaderBNB:
 
     CATEGORY = "loaders"
 
-    def load_checkpoint(self, ckpt_name, load_clip='True', load_vae='True', load_dtype='default', bnb_dtype='nf4', rounding_format=rounding_format_default, custom_rounding_format=rounding_format_default):
+    def load_checkpoint(self, ckpt_name, load_clip='True', load_vae='True', load_dtype='default', bnb_dtype='nf4', rounding_format='default', custom_rounding_format=rounding_format_default):
         if bnb_dtype == "default":
             bnb_dtype = None
         ops = make_ops(ForgeLoader4Bit, current_bnb_dtype = bnb_dtype)
@@ -351,7 +351,7 @@ class SP_UnetLoaderBNB:
 
     CATEGORY = "loaders"
 
-    def load_checkpoint(self, unet_name, load_dtype='default', bnb_dtype='nf4', rounding_format=rounding_format_default, custom_rounding_format=rounding_format_default):
+    def load_checkpoint(self, unet_name, load_dtype='default', bnb_dtype='nf4', rounding_format='default', custom_rounding_format=rounding_format_default):
         if bnb_dtype == "default":
             bnb_dtype = None
         ops = make_ops(ForgeLoader4Bit, current_bnb_dtype = bnb_dtype)
