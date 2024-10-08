@@ -1,5 +1,6 @@
 #shamelessly taken from forge
 
+import logging
 import folder_paths
 
 import torch
@@ -16,6 +17,7 @@ from comfy.model_patcher import ModelPatcher, string_to_seed
 from .float_nf4 import stochastic_rounding_nf4
 
 rounding_format_default = '2,1,7'
+dtype_from_str = {"default": None, "float8_e4m3fn": torch.float8_e4m3fn, "float8_e5m2": torch.float8_e5m2}
 
 def functional_linear_4bits(x, weight, bias):
     out = bnb.matmul_4bit(x, weight.t(), bias=bias, quant_state=weight.quant_state)
@@ -98,8 +100,8 @@ class ForgeParams4bit(Params4bit):
             return self.clone().to(*args, **kwargs)
         device, dtype, non_blocking, convert_to_format = torch._C._nn._parse_to(*args, **kwargs)
         if device is not None and device.type == "cuda" and not self.bnb_quantized:
-            if cli_args.fp8_e4m3fn_unet or cli_args.fp8_e5m2_unet:
-                self.data = self.data.float() # .half() - slow
+            if self.data.dtype != torch.bfloat16:
+                self.data = self.data.to(torch.bfloat16)
             return self._quantize(device)
         else:
             n = self.__class__(
@@ -174,24 +176,6 @@ class ForgeLoader4Bit(torch.nn.Module):
         else:
             super()._load_from_state_dict(state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs)
 
-    # def reload_weight(self, weight):
-    #     weight_original_device = weight.device
-    #     weight = ForgeParams4bit(
-    #         weight,
-    #         requires_grad=False,
-    #         compress_statistics=self.weight.compress_statistics,
-    #         blocksize=self.weight.blocksize,
-    #         quant_type=self.weight.quant_type,
-    #         quant_storage=self.weight.quant_storage,
-    #         bnb_quantized=False
-    #     )
-    #     if weight_original_device.type == 'cuda':
-    #         weight = weight.to(weight_original_device)
-    #     else:
-    #         weight = weight.cuda().to(weight_original_device)
-    #     self.weight = weight
-    #     return self
-
 
 import comfy.ops
 
@@ -225,13 +209,14 @@ class NF4ModelPatcher(ModelPatcher):
             module = weight.module
             weight = functional_dequantize_4bit(weight)
             
-        temp_weight = weight.to(torch.device('cuda'), copy=True, non_blocking=False).to(torch.float32)
+        temp_weight = weight.to(torch.device('cuda'), copy=True, non_blocking=False).to(torch.bfloat16)
 
         out_weight = comfy.lora.calculate_weight(self.patches[key], temp_weight, key)
         # To-do: Fix image burnout
         out_weight = stochastic_rounding_nf4(out_weight, self.rounding_format, seed=string_to_seed(key))
         # out_weight = comfy.float.stochastic_rounding(out_weight, torch.float8_e4m3fn, seed=string_to_seed(key))
         out_weight = self.reload_weight(out_weight.float(), compress_statistics, blocksize, quant_type, quant_state, bnb_quantized, module)
+        out_weight.to(torch.device('cpu'))
 
         if inplace_update:
             comfy.utils.copy_to_param(self.model, key, out_weight)
@@ -306,16 +291,12 @@ def make_ops(loader_class, current_device = None, current_dtype = None, current_
 
     return OPS
 
-
 class SP_CheckpointLoaderBNB:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
             "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
-            "load_clip": (["True", "False"], ),
-            "load_vae": (["True", "False"], ),
-            "bnb_dtype": (("default", "nf4", "fp4"), {"default": "nf4"}),
-            "rounding_format": (("2,1,7", "4,3,7"), {"default": rounding_format_default}),
+            "load_dtype": (("default", "float8_e4m3fn", "float8_e5m2"), {"default": "float8_e4m3fn"}),
          }}
 
     RETURN_TYPES = ("MODEL", "CLIP", "VAE")
@@ -323,25 +304,35 @@ class SP_CheckpointLoaderBNB:
 
     CATEGORY = "loaders"
 
-    def load_checkpoint(self, ckpt_name, load_clip, load_vae, bnb_dtype="default", rounding_format=rounding_format_default):
+    def load_checkpoint(self, ckpt_name, load_clip='True', load_vae='True', load_dtype='default', bnb_dtype='nf4'):
         if bnb_dtype == "default":
             bnb_dtype = None
         ops = make_ops(ForgeLoader4Bit, current_bnb_dtype = bnb_dtype)
         ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
-        model, clip, vae, _ = comfy.sd.load_checkpoint_guess_config(ckpt_path, output_vae=load_vae=="True", output_clip=load_clip=="True", embedding_directory=folder_paths.get_folder_paths("embeddings"), model_options={"custom_operations": ops})
+        model, clip, vae, _ = comfy.sd.load_checkpoint_guess_config(ckpt_path, output_vae=load_vae=="True", output_clip=load_clip=="True", embedding_directory=folder_paths.get_folder_paths("embeddings"), model_options={"custom_operations": ops, "dtype": dtype_from_str[load_dtype]})
 
         model = NF4ModelPatcher.clone(model)
-        model.rounding_format = rounding_format
+        model.rounding_format = rounding_format_default
 
         return model, clip, vae
-    
+
+class SP_CheckpointLoaderBNB_Advanced(SP_CheckpointLoaderBNB):
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
+            "load_clip": (["True", "False"], ),
+            "load_vae": (["True", "False"], ),
+            "load_dtype": (("default", "float8_e4m3fn", "float8_e5m2"), {"default": "float8_e4m3fn"}),
+            "bnb_dtype": (("default", "nf4", "fp4"), {"default": "nf4"}),
+         }}
+
 class SP_UnetLoaderBNB:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
             "unet_name": (folder_paths.get_filename_list("unet"), ),
-            "bnb_dtype": (("default", "nf4", "fp4"), {"default": "nf4"}),
-            "rounding_format": (("2,1,7", "4,3,7"), {"default": rounding_format_default}),
+            "load_dtype": (("default", "float8_e4m3fn", "float8_e5m2"), {"default": "float8_e4m3fn"}),
          }}
 
     RETURN_TYPES = ("MODEL",)
@@ -349,20 +340,31 @@ class SP_UnetLoaderBNB:
 
     CATEGORY = "loaders"
 
-    def load_checkpoint(self, unet_name, bnb_dtype="default", rounding_format=rounding_format_default):
+    def load_checkpoint(self, unet_name, load_dtype='default', bnb_dtype='nf4'):
         if bnb_dtype == "default":
             bnb_dtype = None
         ops = make_ops(ForgeLoader4Bit, current_bnb_dtype = bnb_dtype)
         unet_path = folder_paths.get_full_path("unet", unet_name)
-        model = comfy.sd.load_diffusion_model(unet_path, model_options={"custom_operations": ops})
+        model = comfy.sd.load_diffusion_model(unet_path, model_options={"custom_operations": ops, "dtype": dtype_from_str[load_dtype]})
 
         model = NF4ModelPatcher.clone(model)
-        model.rounding_format = rounding_format
+        model.rounding_format = rounding_format_default
 
         return model, 
+    
+class SP_UnetLoaderBNB_Advanced(SP_UnetLoaderBNB):
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "unet_name": (folder_paths.get_filename_list("unet"), ),
+            "load_dtype": (("default", "float8_e4m3fn", "float8_e5m2"), {"default": "float8_e4m3fn"}),
+            "bnb_dtype": (("default", "nf4", "fp4"), {"default": "nf4"}),
+         }}
 
 NODE_CLASS_MAPPINGS = {
     "SP_UnetLoaderBNB": SP_UnetLoaderBNB,
     "SP_CheckpointLoaderBNB": SP_CheckpointLoaderBNB,
+    "SP_UnetLoaderBNB_Advanced": SP_UnetLoaderBNB_Advanced,
+    "SP_CheckpointLoaderBNB_Advanced": SP_CheckpointLoaderBNB_Advanced,
 }
 

@@ -50,7 +50,7 @@ def manual_stochastic_round_to_nf4(x, rounding_format, generator=None):
 def stochastic_rounding_nf4(value, rounding_format, seed=0):
     generator = torch.Generator(device=value.device)
     generator.manual_seed(seed)
-    output = torch.empty_like(value, dtype=torch.float16)
+    output = torch.empty_like(value, dtype=torch.bfloat16)
     num_slices = max(1, (value.numel() / (4096 * 4096)))
     slice_size = max(1, round(value.shape[0] / num_slices))
     for i in range(0, value.shape[0], slice_size):
