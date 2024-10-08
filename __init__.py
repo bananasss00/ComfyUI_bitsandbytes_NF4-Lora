@@ -212,9 +212,13 @@ class NF4ModelPatcher(ModelPatcher):
         temp_weight = weight.to(torch.device('cuda'), copy=True, non_blocking=False).to(torch.bfloat16)
 
         out_weight = comfy.lora.calculate_weight(self.patches[key], temp_weight, key)
+        
         # To-do: Fix image burnout
-        out_weight = stochastic_rounding_nf4(out_weight, self.rounding_format, seed=string_to_seed(key))
-        # out_weight = comfy.float.stochastic_rounding(out_weight, torch.float8_e4m3fn, seed=string_to_seed(key))
+        if self.rounding_format is not None:
+            out_weight = stochastic_rounding_nf4(out_weight, self.rounding_format, seed=string_to_seed(key))
+        else:
+            out_weight = comfy.float.stochastic_rounding(out_weight, torch.float8_e4m3fn, seed=string_to_seed(key))
+
         out_weight = self.reload_weight(out_weight.float(), compress_statistics, blocksize, quant_type, quant_state, bnb_quantized, module)
         out_weight.to(torch.device('cpu'))
 
@@ -304,7 +308,7 @@ class SP_CheckpointLoaderBNB:
 
     CATEGORY = "loaders"
 
-    def load_checkpoint(self, ckpt_name, load_clip='True', load_vae='True', load_dtype='default', bnb_dtype='nf4'):
+    def load_checkpoint(self, ckpt_name, load_clip='True', load_vae='True', load_dtype='default', bnb_dtype='nf4', rounding_format=rounding_format_default, custom_rounding_format=rounding_format_default):
         if bnb_dtype == "default":
             bnb_dtype = None
         ops = make_ops(ForgeLoader4Bit, current_bnb_dtype = bnb_dtype)
@@ -312,7 +316,12 @@ class SP_CheckpointLoaderBNB:
         model, clip, vae, _ = comfy.sd.load_checkpoint_guess_config(ckpt_path, output_vae=load_vae=="True", output_clip=load_clip=="True", embedding_directory=folder_paths.get_folder_paths("embeddings"), model_options={"custom_operations": ops, "dtype": dtype_from_str[load_dtype]})
 
         model = NF4ModelPatcher.clone(model)
-        model.rounding_format = rounding_format_default
+
+        if rounding_format=='default':
+            rounding_format = None
+        elif rounding_format=='custom':
+            rounding_format = custom_rounding_format
+        model.rounding_format = rounding_format
 
         return model, clip, vae
 
@@ -325,6 +334,8 @@ class SP_CheckpointLoaderBNB_Advanced(SP_CheckpointLoaderBNB):
             "load_vae": (["True", "False"], ),
             "load_dtype": (("default", "float8_e4m3fn", "float8_e5m2"), {"default": "float8_e4m3fn"}),
             "bnb_dtype": (("default", "nf4", "fp4"), {"default": "nf4"}),
+            "rounding_format": (("default", "2,1,7", "4,3,7", "custom"), ),
+            "custom_rounding_format": ("STRING", {"default": rounding_format_default}),
          }}
 
 class SP_UnetLoaderBNB:
@@ -340,7 +351,7 @@ class SP_UnetLoaderBNB:
 
     CATEGORY = "loaders"
 
-    def load_checkpoint(self, unet_name, load_dtype='default', bnb_dtype='nf4'):
+    def load_checkpoint(self, unet_name, load_dtype='default', bnb_dtype='nf4', rounding_format=rounding_format_default, custom_rounding_format=rounding_format_default):
         if bnb_dtype == "default":
             bnb_dtype = None
         ops = make_ops(ForgeLoader4Bit, current_bnb_dtype = bnb_dtype)
@@ -348,7 +359,12 @@ class SP_UnetLoaderBNB:
         model = comfy.sd.load_diffusion_model(unet_path, model_options={"custom_operations": ops, "dtype": dtype_from_str[load_dtype]})
 
         model = NF4ModelPatcher.clone(model)
-        model.rounding_format = rounding_format_default
+
+        if rounding_format=='default':
+            rounding_format = None
+        elif rounding_format=='custom':
+            rounding_format = custom_rounding_format
+        model.rounding_format = rounding_format
 
         return model, 
     
@@ -359,6 +375,8 @@ class SP_UnetLoaderBNB_Advanced(SP_UnetLoaderBNB):
             "unet_name": (folder_paths.get_filename_list("unet"), ),
             "load_dtype": (("default", "float8_e4m3fn", "float8_e5m2"), {"default": "float8_e4m3fn"}),
             "bnb_dtype": (("default", "nf4", "fp4"), {"default": "nf4"}),
+            "rounding_format": (("default", "2,1,7", "4,3,7", "custom"), ),
+            "custom_rounding_format": ("STRING", {"default": rounding_format_default}),
          }}
 
 NODE_CLASS_MAPPINGS = {

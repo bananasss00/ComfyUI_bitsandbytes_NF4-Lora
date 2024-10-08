@@ -18,10 +18,13 @@ def manual_stochastic_round_to_nf4(x, rounding_format, generator=None):
         EXPONENT_BITS, MANTISSA_BITS, EXPONENT_BIAS = 3, 0, 7
     '''
 
-    EXPONENT_BITS, MANTISSA_BITS, EXPONENT_BIAS = 2, 1, 7
+    
 
-    if rounding_format == '4,3,7':
-        EXPONENT_BITS, MANTISSA_BITS, EXPONENT_BIAS = 4, 3, 7
+    rounding_format_arr = rounding_format.split(',')
+    if len(rounding_format_arr) != 3:
+        raise Exception(f'Incorrect argument rounding_format={rounding_format}')
+
+    EXPONENT_BITS, MANTISSA_BITS, EXPONENT_BIAS = tuple(int(x) for x in rounding_format_arr)
 
     x = x.half()
     sign = torch.sign(x)
