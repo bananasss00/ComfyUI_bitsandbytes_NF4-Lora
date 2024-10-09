@@ -100,8 +100,8 @@ class ForgeParams4bit(Params4bit):
             return self.clone().to(*args, **kwargs)
         device, dtype, non_blocking, convert_to_format = torch._C._nn._parse_to(*args, **kwargs)
         if device is not None and device.type == "cuda" and not self.bnb_quantized:
-            if self.data.dtype != torch.bfloat16:
-                self.data = self.data.to(torch.bfloat16)
+            if self.data.dtype != torch.bfloat16 and self.data.dtype != torch.float16:
+                self.data = self.data.to(torch.device('cuda')).to(torch.bfloat16)
             return self._quantize(device)
         else:
             n = self.__class__(
@@ -194,19 +194,17 @@ class NF4ModelPatcher(ModelPatcher):
             self.backup[key] = collections.namedtuple('Dimension', ['weight', 'inplace_update'])(weight.to(device=self.offload_device, copy=inplace_update), inplace_update)
 
         bnb_layer = hasattr(weight, 'bnb_quantized')
-        compress_statistics = None
-        blocksize = None
-        quant_type = None
-        quant_state = None
-        bnb_quantized = None
-        module = None
+        bnb_kwargs = {}
         if bnb_layer:
-            compress_statistics = weight.compress_statistics
-            blocksize = weight.blocksize
-            quant_type = weight.quant_type
-            quant_state = weight.quant_state
-            bnb_quantized = weight.bnb_quantized
-            module = weight.module
+            bnb_kwargs = {
+                'compress_statistics': weight.compress_statistics,
+                'blocksize': weight.blocksize,
+                'quant_type': weight.quant_type,
+                'quant_storage': torch.uint8,
+                'quant_state': copy_quant_state(weight.quant_state, weight.device),
+                'bnb_quantized': weight.bnb_quantized,
+                'module': weight.module
+            }
             weight = functional_dequantize_4bit(weight)
             
         temp_weight = weight.to(torch.device('cuda'), copy=True, non_blocking=False).to(torch.bfloat16)
@@ -219,7 +217,7 @@ class NF4ModelPatcher(ModelPatcher):
         else:
             out_weight = comfy.float.stochastic_rounding(out_weight, torch.float8_e4m3fn, seed=string_to_seed(key))
 
-        out_weight = self.reload_weight(out_weight.float(), compress_statistics, blocksize, quant_type, quant_state, bnb_quantized, module)
+        out_weight = NF4ModelPatcher.reload_weight(out_weight.to(torch.bfloat16), **bnb_kwargs) # .float()
         out_weight.to(torch.device('cpu'))
 
         if inplace_update:
@@ -227,29 +225,36 @@ class NF4ModelPatcher(ModelPatcher):
         else:
             comfy.utils.set_attr_param(self.model, key, out_weight)
 
-    def reload_weight(self, weight, cs, bs, qt, quant_state, bnb_quantized, module):
+    @staticmethod
+    def reload_weight(weight, **kwargs):
         weight_original_device = weight.device
         weight = ForgeParams4bit(
             weight,
             requires_grad=False,
-            compress_statistics=cs,
-            blocksize=bs,
-            quant_type=qt,
-            quant_storage=torch.uint8,
-            quant_state=copy_quant_state(quant_state, weight_original_device),
-            bnb_quantized=bnb_quantized,
-            module=module
+            **kwargs
         )
 
         weight = weight._quantize(weight_original_device)
         
-        if weight_original_device.type == 'cuda':
-            weight = weight.to(weight_original_device)
-        else:
-            weight = weight.cuda().to(weight_original_device)
+        # if weight_original_device.type == 'cuda':
+        #     weight = weight.to(weight_original_device)
+        # else:
+        #     weight = weight.cuda().to(weight_original_device)
         
         return weight
 
+    def partially_unload(self, device_to, memory_to_free=0):
+        for n, m in self.model.named_modules():
+            if not hasattr(m, "comfy_cast_weights"):
+                # append attr from comfy.ops.CastWeightBiasOp for partially unloading weights
+                # class Linear(loader_class, comfy.ops.CastWeightBiasOp) raise Exception 'quant_state is not None'
+                m.comfy_cast_weights = False
+
+        mod_size = self.model_size()
+        result = super().partially_unload(device_to, memory_to_free)
+        logging.info(f'[{self.model.__class__.__name__} ({mod_size/1024**3:.1f}gb)] partially_unload: {device_to}, memory_to_free={memory_to_free/1024**3:.1f}gb / result={result/1024**3:.1f}gb')
+        return result
+    
     def clone(self, *args, **kwargs):
         n = NF4ModelPatcher(self.model, self.load_device, self.offload_device, self.size, weight_inplace_update=self.weight_inplace_update)
         n.patches = {}
@@ -268,6 +273,7 @@ def make_ops(loader_class, current_device = None, current_dtype = None, current_
 
     class OPS(comfy.ops.manual_cast):
         class Linear(loader_class):
+        # class Linear(loader_class, comfy.ops.CastWeightBiasOp):
             def __init__(self, *args, device=None, dtype=None, **kwargs):
                 super().__init__(device=device, dtype=dtype, quant_type=current_bnb_dtype)
                 self.parameters_manual_cast = current_manual_cast_enabled
