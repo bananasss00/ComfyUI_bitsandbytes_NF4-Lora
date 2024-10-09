@@ -340,7 +340,7 @@ class SP_CheckpointLoaderBNB_Advanced(SP_CheckpointLoaderBNB):
             "load_vae": (["True", "False"], ),
             "load_dtype": (("default", "float8_e4m3fn", "float8_e5m2"), {"default": "float8_e4m3fn"}),
             "bnb_dtype": (("default", "nf4", "fp4"), {"default": "nf4"}),
-            "rounding_format": (("default", "2,1,7", "4,3,7", "custom"), ),
+            "rounding_format": (("default", "2,1,7", "custom"), ),
             "custom_rounding_format": ("STRING", {"default": rounding_format_default}),
          }}
 
@@ -381,7 +381,7 @@ class SP_UnetLoaderBNB_Advanced(SP_UnetLoaderBNB):
             "unet_name": (folder_paths.get_filename_list("unet"), ),
             "load_dtype": (("default", "float8_e4m3fn", "float8_e5m2"), {"default": "float8_e4m3fn"}),
             "bnb_dtype": (("default", "nf4", "fp4"), {"default": "nf4"}),
-            "rounding_format": (("default", "2,1,7", "4,3,7", "custom"), ),
+            "rounding_format": (("default", "2,1,7", "custom"), ),
             "custom_rounding_format": ("STRING", {"default": rounding_format_default}),
          }}
 
