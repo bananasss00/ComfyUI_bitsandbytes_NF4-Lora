@@ -102,7 +102,28 @@ class ForgeParams4bit(Params4bit):
         if device is not None and device.type == "cuda" and not self.bnb_quantized:
             if self.data.dtype != torch.bfloat16 and self.data.dtype != torch.float16:
                 self.data = self.data.to(torch.device('cuda')).to(torch.bfloat16)
+            
+            # after called, model converted in to nf4 and enabled loras bad work!
+            # when lora exist in WF, 'patch_weight_to_device' backup/restore fp8 weight and loras work good
+
+            # import traceback
+            # traceback.print_stack()
             return self._quantize(device)
+
+            weight = ForgeParams4bit(
+                self, #self.data, #.to(torch.bfloat16, copy=True),
+                requires_grad=False,
+                compress_statistics=self.compress_statistics,
+                blocksize=self.blocksize,
+                quant_type='nf4',
+                quant_storage=torch.uint8,
+                quant_state=copy_quant_state(self.quant_state, device),
+                bnb_quantized=self.bnb_quantized,
+                module=self.module
+            )
+
+            weight = weight._quantize(device)
+            return weight
         else:
             n = self.__class__(
                 torch.nn.Parameter.to(self, device=device, dtype=dtype, non_blocking=non_blocking),
@@ -115,7 +136,7 @@ class ForgeParams4bit(Params4bit):
                 bnb_quantized=self.bnb_quantized,
                 module=self.module
             )
-            self.module.quant_state = n.quant_state
+            # self.module.quant_state = n.quant_state
             self.data = n.data
             self.quant_state = n.quant_state
             return n
