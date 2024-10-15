@@ -264,17 +264,46 @@ class NF4ModelPatcher(ModelPatcher):
         
         return weight
 
-    def partially_unload(self, device_to, memory_to_free=0):
-        for n, m in self.model.named_modules():
-            if not hasattr(m, "comfy_cast_weights"):
-                # append attr from comfy.ops.CastWeightBiasOp for partially unloading weights
-                # class Linear(loader_class, comfy.ops.CastWeightBiasOp) raise Exception 'quant_state is not None'
-                m.comfy_cast_weights = False
+    # def partially_unload(self, device_to, memory_to_free=0):
+    #     for n, m in self.model.named_modules():
+    #         if not hasattr(m, "comfy_cast_weights"): # and 'make_ops.<locals>.OPS.Linear' in str(m.__class__):
+    #             # logging.info(f'n: {n}')
+    #             # append attr from comfy.ops.CastWeightBiasOp for partially unloading weights
+    #             # class Linear(loader_class, comfy.ops.CastWeightBiasOp) raise Exception 'quant_state is not None'
+    #             m.comfy_cast_weights = False
 
+    #     mod_size = self.model_size()
+    #     result = super().partially_unload(device_to, memory_to_free)
+    #     logging.info(f'[{self.model.__class__.__name__} ({mod_size/1024**3:.1f}gb)] partially_unload: {device_to}, memory_to_free={memory_to_free/1024**3:.1f}gb / result={result/1024**3:.1f}gb')
+    #     return result
+    
+    def partially_unload(self, device_to, memory_to_free=0):
+        memory_freed = super().partially_unload(device_to, memory_to_free)
+
+        for n, m in self.model.named_modules():
+            if memory_to_free < memory_freed:
+                break
+            if 'make_ops.<locals>.OPS.Linear' not in str(m.__class__):
+                continue
+
+            msize = comfy.model_management.module_size(m)
+            m.to(device_to)
+            memory_freed += msize
+
+        self.model.model_loaded_weight_memory -= memory_freed
         mod_size = self.model_size()
-        result = super().partially_unload(device_to, memory_to_free)
-        logging.info(f'[{self.model.__class__.__name__} ({mod_size/1024**3:.1f}gb)] partially_unload: {device_to}, memory_to_free={memory_to_free/1024**3:.1f}gb / result={result/1024**3:.1f}gb')
-        return result
+        logging.info(f'[{self.model.__class__.__name__} ({mod_size/1024**3:.1f}gb)] partially_unload: {device_to}, memory_to_free={memory_to_free/1024**3:.1f}gb / result={memory_freed/1024**3:.1f}gb')
+        return memory_freed
+    
+    def partially_load(self, device_to, extra_memory=0):
+        for n, m in self.model.named_modules():
+            if 'make_ops.<locals>.OPS.Linear' in str(m.__class__):
+                if m.weight.device != device_to:
+                    m.to(device_to)
+        
+        logging.info(f'[{self.model.__class__.__name__}] partially_load: {device_to}')
+
+        return super().partially_load(device_to, extra_memory)
     
     def clone(self, *args, **kwargs):
         n = NF4ModelPatcher(self.model, self.load_device, self.offload_device, self.size, weight_inplace_update=self.weight_inplace_update)
@@ -289,6 +318,7 @@ class NF4ModelPatcher(ModelPatcher):
         n.object_patches_backup = self.object_patches_backup
         n.rounding_format = getattr(self, "rounding_format", rounding_format_default)
         return n
+
 
 def make_ops(loader_class, current_device = None, current_dtype = None, current_manual_cast_enabled = False, current_bnb_dtype = None):
 
