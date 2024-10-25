@@ -228,7 +228,11 @@ class NF4ModelPatcher(ModelPatcher):
             }
             weight = functional_dequantize_4bit(weight)
             
-        temp_weight = weight.to(torch.device('cuda'), copy=True, non_blocking=False).to(torch.bfloat16)
+        # temp_weight = weight.to(torch.device('cuda'), copy=True, non_blocking=False).to(torch.bfloat16)
+        if device_to is not None:
+            temp_weight = comfy.model_management.cast_to_device(weight, device_to, torch.float32, copy=True)
+        else:
+            temp_weight = weight.to(torch.float32, copy=True)
 
         out_weight = comfy.lora.calculate_weight(self.patches[key], temp_weight, key)
         
@@ -239,7 +243,7 @@ class NF4ModelPatcher(ModelPatcher):
             out_weight = comfy.float.stochastic_rounding(out_weight, torch.float8_e4m3fn, seed=string_to_seed(key))
 
         out_weight = NF4ModelPatcher.reload_weight(out_weight.to(torch.bfloat16), **bnb_kwargs) # .float()
-        out_weight.to(torch.device('cpu'))
+        # out_weight.to(torch.device('cpu'))
 
         if inplace_update:
             comfy.utils.copy_to_param(self.model, key, out_weight)
