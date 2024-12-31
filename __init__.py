@@ -456,7 +456,7 @@ class NF4ModelPatcher(ModelPatcher):
     #     return result
     
     def partially_unload(self, device_to, memory_to_free=0):
-        memory_freed = super().partially_unload(device_to, memory_to_free)
+        memory_freed = 0 #super().partially_unload(device_to, memory_to_free)
 
         for n, m in self.model.named_modules():
             if memory_to_free < memory_freed:
