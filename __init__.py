@@ -531,7 +531,7 @@ class NF4ModelPatcher(ModelPatcher):
             n.injections[k] = i.copy()
         # hooks
         n.hook_patches = comfy.model_patcher.create_hook_patches_clone(self.hook_patches)
-        n.hook_patches_backup = comfy.model_patcher.create_hook_patches_clone(self.hook_patches_backup)
+        n.hook_patches_backup = comfy.model_patcher.create_hook_patches_clone(self.hook_patches_backup) if self.hook_patches_backup else self.hook_patches_backup
         for group in self.cached_hook_patches:
             n.cached_hook_patches[group] = {}
             for k in self.cached_hook_patches[group]:
